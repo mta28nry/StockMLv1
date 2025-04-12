@@ -1,0 +1,61 @@
+shap_above_orb_below_ema21_below_ema8_below_orb_below_vwap_return_5m:
+- below_vwap
+- above_orb
+- below_orb
+- below_ema21
+- below_ema8
+shap_above_orb_below_ema21_below_orb_below_vwap_macd_cross_down_return_30m:
+- below_vwap
+- macd_cross_down
+- above_orb
+- below_orb
+- below_ema21
+shap_above_orb_below_ema21_below_orb_below_vwap_macd_cross_down_return_60m:
+- below_vwap
+- macd_cross_down
+- above_orb
+- below_orb
+- below_ema21
+shap_above_orb_below_ema21_below_orb_below_vwap_return_15m:
+- above_orb
+- below_vwap
+- below_orb
+- below_ema21
+shap_above_orb_below_orb_below_prevLow_below_vwap_macd_cross_down_return_1440m:
+- below_vwap
+- macd_cross_down
+- above_orb
+- below_orb
+- below_prevLow
+shap_above_orb_below_orb_below_prevLow_below_vwap_macd_cross_down_return_30m:
+- above_orb
+- below_orb
+- below_prevLow
+- below_vwap
+- macd_cross_down
+shap_above_orb_below_orb_below_prevLow_return_240m:
+- above_orb
+- below_prevLow
+- below_orb
+shap_below_ema21_below_orb_below_prevLow_below_vwap_macd_cross_down_return_30m:
+- below_prevLow
+- below_orb
+- below_vwap
+- below_ema21
+- macd_cross_down
+shap_below_ema21_below_orb_below_prevLow_below_vwap_macd_cross_down_return_60m:
+- below_prevLow
+- below_orb
+- below_vwap
+- below_ema21
+- macd_cross_down
+
+orb_breakout_trend_confirm:
+  - above_orbHigh
+  - above_ema8
+  - above_ema21
+
+orb_breakdown_trend_confirm:
+  - below_orbLow
+  - below_ema8
+  - below_ema21

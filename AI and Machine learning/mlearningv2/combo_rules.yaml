@@ -1,0 +1,4 @@
+combo1: ["below_ema8", "below_orb", "rsi_low"]
+combo2: ["below_vwap", "macd_cross_down", "below_prevLow"]
+combo3: ["above_orb", "macd_cross_up"]
+combo4: ["below_ema21", "rsi_low"]

@@ -5,15 +5,17 @@ Walkforward Backtester
 - Evaluates top combos using rolling walk-forward validation
 - Logs out-of-sample scores
 """
-import logging
-import sqlite3, pandas as pd, logging
-from config import DATA_PATH, DB_PATH
-from log_config import get_logger
-logger = get_logger("model_trainer")
+import sqlite3
+
+import pandas as pd
+
+from config import DATA_PATH, DB_PATH, create_logger
+
+walkforward = create_logger("walkforward", log_to_file=True )
 
 
 def run_walkforward_backtest():
-    logging.info("🧪 Running walk-forward backtesting...")
+    walkforward.info("🧪 Running walk-forward backtesting...")
     df = pd.read_csv(DATA_PATH)
 
     conn = sqlite3.connect(DB_PATH)
@@ -51,4 +53,4 @@ def run_walkforward_backtest():
             scores.append(acc)
 
         avg = sum(scores) / len(scores)
-        logging.info(f"🔁 Walkforward: {combo}_{target} → avg score={avg:.4f}")
+        walkforward.info(f"🔁 Walkforward: {combo}_{target} → avg score={avg:.4f}")

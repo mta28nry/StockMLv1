@@ -1,8 +1,9 @@
 # mlearning/combo_config.py
 
-import yaml
-import os
 import logging
+import os
+
+import yaml
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "combo_rules.yaml")
 

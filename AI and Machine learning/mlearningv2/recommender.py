@@ -9,10 +9,12 @@ Purpose:
 - Adds prediction and confidence columns
 """
 
-import pandas as pd
-import joblib
-import os
 import logging
+import os
+
+import joblib
+import pandas as pd
+
 
 def recommend_trades(model_path, df: pd.DataFrame, features: list):
     if not os.path.exists(model_path):

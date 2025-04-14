@@ -1,8 +1,13 @@
 # mlearning/regression_utils.py
+import logging
+import os
+
+import joblib
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
-import joblib, os, logging
+
 from config import MODEL_DIR
+
 
 def train_regression(X, y, combo_name, target):
     model = XGBRegressor()

@@ -6,7 +6,9 @@ DB Cleanup Utility
 - Vacuum SQLite
 """
 
-import sqlite3, logging
+import logging
+import sqlite3
+
 from config import DB_PATH
 
 

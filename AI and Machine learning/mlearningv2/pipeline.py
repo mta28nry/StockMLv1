@@ -1,11 +1,11 @@
 # mlearning/pipeline.py
 import pandas as pd
-import logging, os
+
 from config import *
+from evaluate import explain_with_shap, plot_heatmap
 from features import build_features
 from labels import build_labels
 from model_trainer import train_and_save
-from evaluate import explain_with_shap, plot_heatmap
 
 logging.basicConfig(level=logging.INFO)
 

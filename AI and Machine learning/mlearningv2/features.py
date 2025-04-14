@@ -1,11 +1,13 @@
 # mlearning/features.py
-import pandas as pd
-import numpy as np
 import logging
-from log_config import get_logger
-logger = get_logger("model_trainer")
+
+import numpy as np
+import pandas as pd
+
+from config import create_logger
 
 # Ensure logger captures all relevant details
+features = create_logger("features", log_to_file=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 
@@ -115,7 +117,7 @@ def build_momentum_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """Orchestrate the feature building process clearly."""
-    logging.info("🚩 Starting robust feature generation...")
+    features.info("🚩 Starting robust feature generation...")
 
     df = (df.pipe(build_core_strategy_flags)
           .pipe(build_price_positioning)
@@ -134,5 +136,5 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df.dropna(inplace=True)
 
-    logging.info(f"✅ Feature generation complete: {df.shape[1]} features created, {df.shape[0]} rows ready.")
+    features.info(f"✅ Feature generation complete: {df.shape[1]} features created, {df.shape[0]} rows ready.")
     return df

@@ -1,8 +1,11 @@
 # mlearning/combo_logger.py
-import pandas as pd
-import os
 import logging
+import os
+
+import pandas as pd
+
 from config import OUTPUT_DIR
+
 
 def log_top_combos(importance_df: pd.DataFrame, model_name: str, target: str, top_n: int = 6):
     """

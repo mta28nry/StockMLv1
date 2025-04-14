@@ -8,12 +8,15 @@ Purpose:
 - Supports full-loop scoring feedback
 """
 
-import sqlite3
-import pandas as pd
 import logging
-from config import DB_PATH, RETURN_COLUMNS, OUTPUT_DIR
 import os
+import sqlite3
 from datetime import datetime
+
+import pandas as pd
+
+from config import DB_PATH, OUTPUT_DIR
+
 
 def score_predictions(pred_df, combo_name, target_col, threshold=0.01):
     if pred_df.empty or target_col not in pred_df:

@@ -9,10 +9,13 @@ Purpose:
 - Used to report best strategies
 """
 
-import sqlite3
-import pandas as pd
 import logging
+import sqlite3
+
+import pandas as pd
+
 from config import DB_PATH
+
 
 def suggest_top_combos(top_n=10):
     logging.info("🔍 Recommending best combos from DB...")

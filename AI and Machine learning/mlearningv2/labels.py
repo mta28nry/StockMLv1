@@ -5,13 +5,14 @@ Generates target return labels based on defined horizons.
 Clearly handles existing columns and adds additional volatility-based labels.
 """
 
-import pandas as pd
-import numpy as np
 import logging
-from config import RETURN_COLUMNS
-from log_config import get_logger
-logger = get_logger("model_trainer")
 
+import numpy as np
+import pandas as pd
+
+from config import RETURN_COLUMNS, create_logger
+
+labels = create_logger("labels", log_to_file=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 # Clearly defined return horizons (periods based on 5-min intervals)
@@ -31,16 +32,16 @@ def build_return_labels(df: pd.DataFrame, return_columns: list) -> pd.DataFrame:
     """
     for col in return_columns:
         if col in df.columns:
-            logging.info(f"⚠️ Column '{col}' already exists. Skipping.")
+            labels.info(f"⚠️ Column '{col}' already exists. Skipping.")
             continue
 
         period = HORIZON_MAP.get(col)
         if period is None:
-            logging.warning(f"❌ No horizon mapping found for '{col}'. Skipped.")
+            labels.warning(f"❌ No horizon mapping found for '{col}'. Skipped.")
             continue
 
         df[col] = df["Close"].pct_change(periods=period).shift(-period)
-        logging.info(f"✅ Generated label '{col}' with horizon of {period} periods.")
+        labels.info(f"✅ Generated label '{col}' with horizon of {period} periods.")
 
     return df
 
@@ -52,14 +53,14 @@ def build_directional_labels(df: pd.DataFrame, return_columns: list, threshold: 
     for col in return_columns:
         direction_col = f"{col}_direction"
         if direction_col in df.columns:
-            logging.info(f"⚠️ Column '{direction_col}' already exists. Skipping.")
+            labels.info(f"⚠️ Column '{direction_col}' already exists. Skipping.")
             continue
 
         df[direction_col] = np.where(
             df[col] > threshold, 1,
             np.where(df[col] < -threshold, -1, 0)
             )
-        logging.info(f"✅ Generated directional label '{direction_col}' using threshold {threshold}.")
+        labels.info(f"✅ Generated directional label '{direction_col}' using threshold {threshold}.")
 
     return df
 
@@ -70,11 +71,11 @@ def build_volatility_labels(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     """
     vol_col = f"volatility_{window}bars"
     if vol_col in df.columns:
-        logging.info(f"⚠️ Column '{vol_col}' already exists. Skipping volatility calculation.")
+        labels.info(f"⚠️ Column '{vol_col}' already exists. Skipping volatility calculation.")
         return df
 
     df[vol_col] = df["Close"].rolling(window=window, min_periods=1).std().shift(-window)
-    logging.info(f"✅ Generated volatility label '{vol_col}' over {window}-bar window.")
+    labels.info(f"✅ Generated volatility label '{vol_col}' over {window}-bar window.")
 
     return df
 
@@ -83,11 +84,11 @@ def build_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     Main orchestrator to generate all labels clearly.
     """
-    logging.info("🚩 Starting comprehensive label generation...")
+    labels.info("🚩 Starting comprehensive label generation...")
 
     df = build_return_labels(df, RETURN_COLUMNS)
     df = build_directional_labels(df, RETURN_COLUMNS)
     df = build_volatility_labels(df, window=20)
 
-    logging.info("✅ All labels generated successfully.")
+    labels.info("✅ All labels generated successfully.")
     return df

@@ -10,9 +10,11 @@ Purpose:
 - Updates `combo_history` table with status
 """
 
-import sqlite3
 import logging
+import sqlite3
+
 from config import DB_PATH
+
 
 def run_self_improver(min_acc=0.52, min_shap=0.15, promote_threshold=3):
     logging.info("🧠 Self-Improver started...")

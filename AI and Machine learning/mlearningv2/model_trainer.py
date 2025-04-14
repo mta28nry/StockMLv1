@@ -1,161 +1,148 @@
 """
-model_trainer.py — Unified ML training module (solo + combo)
+model_trainer.py — ML Training Engine (SHAP Ready)
+Purpose:
+- Trains, saves, and evaluates models (XGBoost, LightGBM, RF, LR)
+- Logs model performance
+- SHAP evaluation now deferred to post-phase
 """
 
-import os
 import hashlib
-import joblib
-import logging
+import os
 import sqlite3
-import yaml
-import numpy as np
-import pandas as pd
 from datetime import datetime
 from itertools import combinations
-import matplotlib.pyplot as plt
-import seaborn as sns
 
-from sklearn.model_selection import train_test_split
+import joblib
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+import yaml
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier, XGBRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
 
-from config import MODEL_DIR, DB_PATH
-from evaluate import explain_with_shap
+from config import DB_PATH, MODEL_DIR, create_logger, error_logger
 from strategy_meta import log_meta
-from log_config import get_logger
 
 # ---------------------------
-# Logging
+# 🔧 Logger
 # ---------------------------
-LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "Logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-logger = get_logger("model_trainer")
+model_trainer = create_logger("Model_Trainer", log_to_file=True)
+
 
 # ---------------------------
-# Environment
+# ⚙️ Model Factory
 # ---------------------------
-def is_gpu_available():
-    try:
-        import pynvml
-        pynvml.nvmlInit()
-        return pynvml.nvmlDeviceGetCount() > 0
-    except Exception:
-        return False
-
-USE_GPU = is_gpu_available()
-THREADS = os.cpu_count() or 4
-logger.info(f"🖥️ GPU Available: {USE_GPU} | Threads: {THREADS}")
-
-# ---------------------------
-# Model Factory
-# ---------------------------
-def get_model(name, task):
-    def safe_lightgbm(device_type):
+def get_model(name, task, use_gpu=True, threads=os.cpu_count() or 8):
+    if name == "LightGBM":
+        device = "gpu" if use_gpu else "cpu"
         try:
-            logger.info(f"🔧 Initializing LightGBM ({device_type})")
-            return {
-                "classification": LGBMClassifier(device=device_type, gpu_use_dp=True, n_jobs=THREADS),
-                "regression": LGBMRegressor(device=device_type, gpu_use_dp=True, n_jobs=THREADS)
-            }[task]
-        except Exception as e:
-            logger.warning(f"⚠️ LightGBM GPU failed: {e} — Using CPU")
-            return {
-                "classification": LGBMClassifier(device="cpu", n_jobs=THREADS),
-                "regression": LGBMRegressor(device="cpu", n_jobs=THREADS)
-            }[task]
-
-    if task == "classification":
-        return {
-            "RandomForest": RandomForestClassifier(n_estimators=100, n_jobs=THREADS),
-            "LogisticRegression": LogisticRegression(max_iter=1000, n_jobs=THREADS),
-            "XGBoost": XGBClassifier(
-                eval_metric='logloss', use_label_encoder=False,
-                tree_method="gpu_hist" if USE_GPU else "hist",
-                predictor="gpu_predictor" if USE_GPU else "auto", n_jobs=THREADS
-            ),
-            "LightGBM": safe_lightgbm("gpu" if USE_GPU else "cpu")
-        }[name]
-
-    if task == "regression":
-        return {
-            "RandomForest": RandomForestRegressor(n_estimators=100, n_jobs=THREADS),
-            "XGBoost": XGBRegressor(
-                tree_method="gpu_hist" if USE_GPU else "hist",
-                predictor="gpu_predictor" if USE_GPU else "auto", n_jobs=THREADS
-            ),
-            "LightGBM": safe_lightgbm("gpu" if USE_GPU else "cpu")
-        }[name]
-
+            return LGBMClassifier(
+                device=device, gpu_use_dp=True, n_jobs=threads, verbosity=-1
+                ) if task == "classification" else \
+                LGBMRegressor(device=device, gpu_use_dp=True, n_jobs=threads, verbosity=-1)
+        except:
+            return LGBMClassifier(n_jobs=threads, verbosity=-1) if task == "classification" else \
+                LGBMRegressor(n_jobs=threads, verbosity=-1)
+    elif name == "XGBoost":
+        return XGBClassifier(
+            use_label_encoder=False,
+            tree_method="gpu_hist" if use_gpu else "hist",
+            predictor="gpu_predictor" if use_gpu else "auto",
+            n_jobs=threads,
+            verbosity=0
+            ) if task == "classification" else XGBRegressor(
+            tree_method="gpu_hist" if use_gpu else "hist",
+            predictor="gpu_predictor" if use_gpu else "auto",
+            n_jobs=threads,
+            verbosity=0
+            )
+    elif name == "RandomForest":
+        return RandomForestClassifier(n_estimators=100, n_jobs=threads) if task == "classification" else \
+            RandomForestRegressor(n_estimators=100, n_jobs=threads)
+    elif name == "LogisticRegression":
+        return LogisticRegression(max_iter=1000, n_jobs=threads)
     raise ValueError(f"❌ Unsupported model: {name} ({task})")
 
-# ---------------------------
-# Helpers
-# ---------------------------
-def hash_features(feature_list):
-    return hashlib.md5("_".join(sorted(feature_list)).encode()).hexdigest()
 
-def already_trained(combo, target, model_type, feature_hash, min_acc=0.01):
+# ---------------------------
+# 🔑 Utility Functions
+# ---------------------------
+def hash_features(features):
+    return hashlib.md5("_".join(sorted(features)).encode()).hexdigest()
+
+
+def already_trained(combo, target, model_type, feature_hash):
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.execute("""
+            row = conn.execute(
+                """
                 SELECT accuracy, feature_hash FROM meta
                 WHERE combo=? AND target=? AND model_type=? AND kept=1
                 ORDER BY date_trained DESC LIMIT 1
-            """, (combo, target, model_type))
-            row = cur.fetchone()
-            return row and row[0] >= min_acc and row[1] == feature_hash
+            """, (combo, target, model_type)
+                ).fetchone()
+            return row and row[1] == feature_hash
     except Exception as e:
-        logger.warning(f"⚠️ Failed meta lookup: {e}")
+        model_trainer.warning(f"⚠️ Already-trained check failed: {e}")
         return False
 
-def log_indicator_score(feature, model, target, acc, shap_avg, feature_hash):
+
+def safe_model_save(model, model_type, suffix):
+    folder = os.path.join(MODEL_DIR, model_type)
+    os.makedirs(folder, exist_ok=True)
+
+    clean = suffix.replace("return_", "").replace("_", "-")
+    path = os.path.join(folder, f"{model_type}_{clean}.pkl")  # Ensure same format for saving/loading
+    joblib.dump(model, path, compress=3)
+    model_trainer.info(f"✅ Model saved: {path}")
+
+
+
+def log_indicator_score(feature, model, target, acc, feature_hash, symbol="UNKNOWN"):
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS indicator_scores (
                     feature TEXT, model TEXT, target TEXT,
                     accuracy REAL, shap_score REAL,
-                    feature_hash TEXT, date_trained TEXT
+                    feature_hash TEXT, date_trained TEXT,
+                    symbol TEXT
                 )
-            """)
-            conn.execute("""
-                INSERT INTO indicator_scores VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (feature, model, target, acc, shap_avg, feature_hash, datetime.now().isoformat()))
+            """
+                )
+            conn.execute(
+                """
+                INSERT INTO indicator_scores (feature, model, target, accuracy, shap_score, feature_hash, date_trained, symbol)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (feature, model, target, acc, feature_hash, datetime.now().isoformat(), symbol)
+                )
     except Exception as e:
-        logger.warning(f"⚠️ Failed indicator logging: {feature}, {model}: {e}")
+        error_logger.error(f"[log_indicator_score] ❌ Failed: {e}")
 
-def log_shap_to_db(feature, model, target, shap_df):
-    try:
-        if shap_df.empty:
-            return
-        shap_df["combo"] = feature
-        shap_df["target"] = target
-        shap_df["model_type"] = model
-        shap_df["rank"] = shap_df["importance"].rank(ascending=False)
-        with sqlite3.connect(DB_PATH) as conn:
-            shap_df.to_sql("shap_features", conn, if_exists="append", index=False)
-    except Exception as e:
-        logger.warning(f"⚠️ Failed SHAP logging for {feature}/{model}: {e}")
 
 # ---------------------------
-# Core Training Logic
+# 🧠 Core Training Function
 # ---------------------------
-def train_and_save(X, y, model_type="XGBoost", task="classification", suffix="model",
-                   feature_list=None, fit_params=None, early_stopping_rounds=20, eval_metric=None):
 
+import shap
+def train_and_save(
+    X, y, model_type="XGBoost", task="classification", suffix="model", symbol="UNKNOWN",
+    feature_list=None, fit_params=None, eval_metric=None, use_gpu=False, threads=os.cpu_count()
+):
     try:
-        os.makedirs(MODEL_DIR, exist_ok=True)
         if feature_list:
             X = X[feature_list]
 
         feature_hash = hash_features(feature_list or X.columns.tolist())
         target = suffix.split("_")[-1]
-        combo_name = suffix.replace(f"_{target}", "")
+        combo = suffix.replace(f"_{target}", "")
 
-        if already_trained(combo_name, target, model_type, feature_hash):
-            logger.info(f"⏭️ {model_type} {combo_name} skipped (cached)")
+        if already_trained(combo, target, model_type, feature_hash):
+            model_trainer.info(f"⏭️ Skipping {model_type} {combo} (already trained)")
             return None
 
         X_train, X_val, y_train, y_val = train_test_split(
@@ -164,95 +151,136 @@ def train_and_save(X, y, model_type="XGBoost", task="classification", suffix="mo
             random_state=42
         )
 
-        model = get_model(model_type, task)
-        fit_args = {"eval_set": [(X_val, y_val)], "verbose": False}
-        if "XGBoost" in model_type or "LightGBM" in model_type:
-            fit_args["early_stopping_rounds"] = early_stopping_rounds
-            if eval_metric: fit_args["eval_metric"] = eval_metric
-        if fit_params: fit_args.update(fit_params)
+        model = get_model(model_type, task, use_gpu=use_gpu, threads=threads)
+
+        fit_args = {}
+        accepted = model.fit.__code__.co_varnames
+        if "eval_set" in accepted:
+            fit_args["eval_set"] = [(X_val, y_val)]
+        if eval_metric and "eval_metric" in accepted:
+            fit_args["eval_metric"] = eval_metric
+        if "early_stopping_rounds" in accepted:
+            fit_args["early_stopping_rounds"] = 20
+        if "verbose" in accepted:
+            fit_args["verbose"] = False
+        if fit_params:
+            for k, v in fit_params.items():
+                if k in accepted:
+                    fit_args[k] = v
 
         model.fit(X_train, y_train, **fit_args)
-        score_val = model.score(X_val, y_val)
+        score = model.score(X_val, y_val)
+        model_trainer.info(f"📊 {model_type} | {combo} | Score: {score:.4f}")
+        safe_model_save(model, model_type, suffix)
 
-        logger.info(f"📊 {model_type} | {combo_name} | Val: {score_val:.4f}")
-        model_path = os.path.join(MODEL_DIR, f"{model_type}_{task}_{suffix}.pkl")
-        joblib.dump(model, model_path, compress=3)
+        # SHAP calculation
+        try:
+            explainer = shap.Explainer(model, X_val)
+            shap_values = explainer(X_val)
+            shap_mean = abs(shap_values.values).mean(axis=0)
+            shap_score = shap_mean.mean()
+        except Exception as shap_err:
+            model_trainer.warning(f"⚠️ SHAP failed for {combo}: {shap_err}")
+            shap_score = 0.0
 
-        shap_df = explain_with_shap(model, X_val, model_type, suffix=suffix, show=False)
-        shap_score = shap_df["importance"].mean() if not shap_df.empty else 0
+        # Log meta
+        try:
+            log_meta(
+                combo=combo,
+                target=target,
+                accuracy=score,
+                shap_score=shap_score,
+                kept=True,
+                model_type=model_type,
+                feature_hash=feature_hash,
+                symbol=symbol,
+                timestamp=datetime.now().isoformat()
+            )
+        except Exception as e:
+            model_trainer.error(f"❌ log_meta failed for {combo}: {e}")
 
-        log_meta(combo=combo_name, target=target, accuracy=score_val,
-                 shap_quality=shap_score, kept=True,
-                 model_type=model_type, feature_hash=feature_hash)
-
-        if feature_list and len(feature_list) == 1:
-            log_indicator_score(feature_list[0], model_type, target, score_val, shap_score, feature_hash)
-            log_shap_to_db(feature_list[0], model_type, target, shap_df)
-
-        preds = pd.DataFrame(index=X_val.index)
-        preds["prediction"] = model.predict(X_val)
-        if hasattr(model, "predict_proba"):
-            preds["confidence"] = model.predict_proba(X_val)[:, 1]
-        preds["predicted_signal"] = (preds["prediction"] == 1).astype(int)
-        return preds
+        return model
 
     except Exception as e:
-        logger.error(f"❌ {model_type} failed: {suffix} — {e}")
+        model_trainer.error(f"❌ {model_type} | {suffix} -> {e}")
         return None
 
-# ---------------------------
-# Solo Feature Evaluator
-# ---------------------------
 def train_each_indicator_all_models_full(
-    df,
-    target_col="return_15m",
-    task="regression",
-    models=("RandomForest", "XGBoost", "LightGBM", "LogisticRegression"),
+    df: pd.DataFrame,
+    config: dict,
+    symbol: str = "UNKNOWN",
+    horizons=None,
     export_csv=True,
-    csv_path="Logs/solo_indicator_scores.csv"
-):
-    logger.info("🚀 SOLO FEATURE TRAINING: All Models")
+    csv_path="Logs/solo_indicator_scores_all_tf.csv"
+) -> pd.DataFrame:
+    """
+    Trains each indicator model using all classifiers/regressors.
+    Logs performance + shap and saves optional CSV.
+    """
+    model_trainer.info(f"🚀 Solo Model Training Started for: {symbol}")
 
-    exclude = ["Open", "High", "Low", "Close", "Volume", target_col]
-    features = [f for f in df.columns if f not in exclude and df[f].dtype in [np.float64, np.int64]]
+    results = []
+    task_type = config.get("task", "regression")
+    model_types = config["models"]["classifiers"] if task_type == "classification" else config["models"]["regressors"]
+    horizons = horizons or config.get("features", {}).get("targets", config["RETURN_COLUMNS"])
 
-    results, shap_logs = [], {}
+    exclude_cols = ["Open", "High", "Low", "Close", "Volume"]
+    features = [
+        col for col in df.columns
+        if col not in exclude_cols and not col.startswith("return_") and df[col].dtype in [float, int]
+    ]
 
-    for feature in features:
-        for model_type in models:
-            if model_type == "LogisticRegression" and task != "classification":
-                continue
+    for target in horizons:
+        if target not in df.columns:
+            model_trainer.warning(f"⚠️ Target missing in data: {target}")
+            continue
 
-            suffix = f"{model_type}_{feature}_{target_col}"
-            preds = train_and_save(
-                X=df[[feature]].copy(),
-                y=df[target_col],
-                model_type=model_type,
-                task=task,
-                suffix=suffix,
-                feature_list=[feature]
-            )
-            if preds is not None:
-                acc = preds["predicted_signal"].mean() if "predicted_signal" in preds else None
-                shap_df = explain_with_shap(get_model(model_type, task), df[[feature]], model_type, suffix=suffix, show=False)
-                shap_score = shap_df["importance"].mean() if not shap_df.empty else 0
-                results.append({
-                    "feature": feature, "model": model_type,
-                    "target": target_col, "accuracy": acc, "shap_score": shap_score
-                })
-                shap_logs.setdefault(model_type, []).append(shap_df)
+        for feature in features:
+            for model_type in model_types:
+                if model_type == "LogisticRegression" and task_type != "classification":
+                    continue
 
-    df_result = pd.DataFrame(results)
-    if export_csv:
-        df_result.to_csv(csv_path, index=False)
-        logger.info(f"✅ Solo model results → {csv_path}")
+                suffix = f"{model_type}_{feature}_{target}"
+                model_trainer.info(f"🧪 Training {model_type} on {feature} → {target}")
 
-    save_heatmaps(df_result, shap_logs)
-    export_top_combos(df_result)
-    return df_result
+                model = train_and_save(
+                    X=df[[feature]],
+                    y=df[target],
+                    model_type=model_type,
+                    task=task_type,
+                    suffix=suffix,
+                    feature_list=[feature],
+                    use_gpu=config["training"].get("use_gpu", False),
+                    threads=os.cpu_count(),
+                    symbol=symbol
+                )
+
+                if model:
+                    try:
+                        acc = model.score(df[[feature]], df[target])
+                        results.append({
+                            "feature": feature,
+                            "model": model_type,
+                            "target": target,
+                            "accuracy": acc,
+                            "symbol": symbol
+                        })
+                    except Exception as e:
+                        model_trainer.error(f"⚠️ Scoring failed for {suffix}: {e}")
+
+    result_df = pd.DataFrame(results)
+    if export_csv and not result_df.empty:
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        result_df.to_csv(csv_path, index=False)
+        model_trainer.info(f"📤 Scores saved to: {csv_path}")
+
+    return result_df
+
+
+
 
 # ---------------------------
-# Visual Outputs
+# 🔬 SHAP Summary Heatmaps
 # ---------------------------
 def save_heatmaps(results_df, shap_logs):
     try:
@@ -264,7 +292,7 @@ def save_heatmaps(results_df, shap_logs):
         plt.savefig("Logs/solo_accuracy_heatmap.png")
         plt.close()
     except Exception as e:
-        logger.warning(f"⚠️ Failed accuracy heatmap: {e}")
+        model_trainer.error(f"⚠️ Accuracy heatmap failed: {e}")
 
     for model_type, shap_list in shap_logs.items():
         try:
@@ -275,14 +303,69 @@ def save_heatmaps(results_df, shap_logs):
             plt.savefig(f"Logs/shap_summary_{model_type}.png")
             plt.close()
         except Exception as e:
-            logger.warning(f"⚠️ Failed SHAP summary: {e}")
+            model_trainer.error(f"⚠️ SHAP summary failed: {e}")
 
-def export_top_combos(df, top_n=20, combo_size=3):
+
+def log_shap_to_db(feature: str, model: str, target: str, shap_df: pd.DataFrame, symbol="UNKNOWN"):
+    """
+    Store SHAP values into the SQLite database for later querying and meta-analysis.
+    """
     try:
-        top_feats = df.sort_values("accuracy", ascending=False)["feature"].unique()[:top_n]
-        combos = { "_".join(c): list(c) for c in combinations(top_feats, combo_size) }
+        if shap_df.empty: return
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shap_features (
+                    feature TEXT, importance REAL, rank REAL,
+                    combo TEXT, target TEXT, model_type TEXT, symbol TEXT
+                )
+            """
+                )
+            shap_df["combo"] = feature
+            shap_df["target"] = target
+            shap_df["model_type"] = model
+            shap_df["rank"] = shap_df["importance"].rank(ascending=False)
+            shap_df["feature"] = shap_df.index
+            shap_df["symbol"] = symbol
+            shap_df.to_sql("shap_features", conn, if_exists="append", index=False)
+    except Exception as e:
+        error_logger.error(f"[log_shap_to_db] ❌ Failed: {e}")
+
+
+def evaluate_shap_parallel(model_data_list):
+    """
+    Parallel SHAP explainability using Dask for multiple models.
+    model_data_list = List of (model, X_val, model_type, suffix)
+    """
+    from dask.distributed import Client, LocalCluster
+
+    client = Client(LocalCluster(n_workers=os.cpu_count(), threads_per_worker=1))
+    model_trainer.info(f"⚡ SHAP parallel cluster started with {os.cpu_count()} workers")
+
+    futures = []
+    for model, X_val, model_type, suffix in model_data_list:
+        futures.append(client.submit(explain_with_shap, model, X_val, model_type, suffix, show=False))
+
+    results = []
+    for fut in futures:
+        try:
+            shap_df = fut.result()
+            results.append(shap_df)
+        except Exception as e:
+            model_trainer.error(f"❌ SHAP future failed: {e}")
+    client.close()
+    return results
+
+
+# ---------------------------
+# 🔁 Combo Export
+# ---------------------------
+def export_top_combos(results_df, top_n=20, combo_size=3):
+    try:
+        top_feats = results_df.sort_values("accuracy", ascending=False)["feature"].unique()[:top_n]
+        combos = {"_".join(c): list(c) for c in combinations(top_feats, combo_size)}
         with open("autogen_combos_from_solo.yaml", "w") as f:
             yaml.dump(combos, f)
-        logger.info("✅ Exported solo combos to autogen_combos_from_solo.yaml")
+        model_trainer.info("✅ Exported top combos to autogen_combos_from_solo.yaml")
     except Exception as e:
-        logger.warning(f"⚠️ Combo export failed: {e}")
+        model_trainer.error(f"⚠️ Combo export failed: {e}")

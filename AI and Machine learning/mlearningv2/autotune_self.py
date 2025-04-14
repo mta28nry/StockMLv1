@@ -7,17 +7,19 @@ Purpose:
 - Logs improvements, stores tuned models, updates SQLite
 """
 
-import os
 import logging
+import os
 import sqlite3
+
 import joblib
 import pandas as pd
-from xgboost import XGBClassifier
 from sklearn.model_selection import RandomizedSearchCV
-from config import DB_PATH, DATA_PATH, MODEL_DIR
+from xgboost import XGBClassifier
+
+from config import DATA_PATH, DB_PATH, MODEL_DIR
+from evaluate import explain_with_shap
 from features import build_features
 from labels import build_labels
-from evaluate import explain_with_shap
 from strategy_meta import log_meta, log_tuning_result
 
 logging.basicConfig(level=logging.INFO)

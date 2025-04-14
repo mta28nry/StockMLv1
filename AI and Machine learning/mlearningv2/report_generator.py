@@ -8,27 +8,27 @@ Purpose:
 - Print to console + save to CSV
 """
 
-import sqlite3
-import pandas as pd
 import os
-import logging
-from config import DB_PATH, OUTPUT_DIR
-import datetime
-from log_config import get_logger
-logger = get_logger("model_trainer")
+import sqlite3
+
+import pandas as pd
+
+from config import DB_PATH, OUTPUT_DIR, create_logger
+
+report_generator = create_logger("report_generator", log_to_file=True)
 
 
 
 
 
 def generate_report(top_n=3, output_csv=True):
-    logging.info("📊 Generating training report from meta DB...")
+    report_generator.info("📊 Generating training report from meta DB...")
     conn = sqlite3.connect(DB_PATH)
 
     try:
-        df = pd.read_sql("SELECT * FROM meta ORDER BY timestamp DESC", conn)
+        df = pd.read_sql("SELECT * FROM meta ORDER BY date_trained DESC", conn)
         if df.empty:
-            logging.warning("⚠️ No data found in meta table.")
+            report_generator.error("⚠️ No data found in meta table.")
             return
 
         summary_rows = []
@@ -52,35 +52,37 @@ def generate_report(top_n=3, output_csv=True):
             summary_df = pd.DataFrame(summary_rows)
             out_path = os.path.join(OUTPUT_DIR, "report_summary.csv")
             summary_df.to_csv(out_path, index=False)
-            logging.info(f"✅ Report saved to: {out_path}")
+            report_generator.info(f"✅ Report saved to: {out_path}")
 
     except Exception as e:
-        logging.error(f"❌ Report generation failed: {e}")
+        report_generator.error(f"❌ Report generation failed: {e}")
     finally:
         conn.close()
 
 
 
-def generate_run_readme(meta_summary_df):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    readme_path = os.path.join(OUTPUT_DIR, "README.md")
+def generate_run_readme(summary_dict):
+    from config import OUTPUT_DIR
+    import os
 
-    lines = [
-        f"# 📘 ML Training Summary - {timestamp}\n",
-        f"**Dataset rows:** {meta_summary_df.get('rows', 'N/A')}",
-        f"**Generated Models:** {meta_summary_df.get('models', 'N/A')}",
-        f"**Combos Trained:** {meta_summary_df.get('combos', 'N/A')}",
-        f"**Feedback Scores Logged:** {meta_summary_df.get('feedback', 'N/A')}",
-        f"**Top Accuracy:** {meta_summary_df.get('top_accuracy', 'N/A'):.4f}",
-        f"**Top SHAP Score:** {meta_summary_df.get('top_shap', 'N/A'):.4f}",
-        "\n## 🔝 Top Combos:\n"
-    ]
+    if not summary_dict:
+        report_generator.error("❌ generate_run_readme() received None. Skipping README generation.")
+        return
 
-    if 'top_df' in meta_summary_df:
-        top_df = meta_summary_df["top_df"]
-        lines += [top_df.to_markdown(index=False)]
+    try:
+        readme_lines = [
+            "# 🧠 Run Summary",
+            "",
+            f"**Run ID:** {summary_dict.get('run_id', 'N/A')}",
+            f"**Date:** {summary_dict.get('date', 'N/A')}",
+            f"**Dataset rows:** {summary_dict.get('rows', 'N/A')}",
+            f"**Best Accuracy:** {summary_dict.get('best_accuracy', 'N/A')}",
+        ]
+        readme_path = os.path.join(OUTPUT_DIR, "RUN_SUMMARY.md")
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(readme_lines))
+        report_generator.info(f"✅ Generated summary at {readme_path}")
+    except Exception as e:
+        report_generator.error(f"❌ Failed to write README: {e}")
 
-    with open(readme_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
 
-    logging.info(f"📘 README generated: {readme_path}")
